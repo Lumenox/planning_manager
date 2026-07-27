@@ -71,21 +71,36 @@ from workalendar.europe import France
 # 1. Génération du calendrier de campagne
 # ======================================================================
 
-def generer_calendrier(annee: int) -> pd.DataFrame:
-    """Construit le calendrier jour par jour de la campagne `annee`.
+def generer_calendrier(date_debut_campagne, date_fin_campagne) -> tuple:
+    """Construit le calendrier jour par jour entre les bornes de la campagne
+    (`campagne_config.date_debut_campagne` / `date_fin_campagne`, bornes incluses).
 
     Qualifie chaque jour (vendredi/samedi/dimanche, veille de férié,
     férié, veille de lundi férié, lundi férié), numérote les week-ends
     (WE_N) en fusionnant les fériés adjacents au même numéro, et
     qualifie chaque numéro de week-end en "double" (2 jours) ou
     "triple" (3 jours, férié accolé).
+
+    Retourne (df_calendar, annee) où `annee` est déduite de la date de
+    début de campagne et sert de référence pour les gardes de Noël
+    (25/12/annee) et du Nouvel An (01/01/annee+1) : les bornes doivent
+    donc couvrir ces deux dates.
     """
     cal = France()
 
-    start = datetime.strptime("01-02-{0}".format(annee), "%m-%d-%Y")
-    end = datetime.strptime("01-12-{0}".format(annee + 1), "%m-%d-%Y")
-    dates = [start + timedelta(days=x) for x in range((end - start).days)]
+    start = pd.Timestamp(date_debut_campagne)
+    end = pd.Timestamp(date_fin_campagne)
+    annee = start.year
+    dates = [start + timedelta(days=x) for x in range((end - start).days + 1)]
     dates_str = [d.strftime("%m-%d-%Y") for d in dates]
+
+    if "12-25-{0}".format(annee) not in dates_str or "01-01-{0}".format(annee + 1) not in dates_str:
+        raise ValueError(
+            "Les bornes de campagne ({0} -> {1}) ne couvrent pas Noël (25/12/{2}) et le "
+            "Nouvel An (01/01/{3}) : vérifie campagne_config.".format(
+                date_debut_campagne, date_fin_campagne, annee, annee + 1
+            )
+        )
 
     df_calendar = pd.DataFrame(columns=[
         "date", "day_of_week", "name_day", "garde", "astreinte",
@@ -159,8 +174,7 @@ def generer_calendrier(annee: int) -> pd.DataFrame:
         (df_calendar["ferie"] == 1) & (df_calendar["name_day"] == "dim"), "ferie"
     ] = 0
 
-    return df_calendar
-
+    return df_calendar, annee
 
 # ======================================================================
 # 2. Chargement des données
@@ -181,6 +195,140 @@ def charger_memoire_fetes(annee: int, dossier: str = ".") -> pd.DataFrame:
     """Charge la mémoire inter-années des gardes de Noël / Nouvel An."""
     df_fetes = pd.read_excel(f"{dossier}/calendar_consignes_fetes_{annee}.xlsx", index_col=0)
     return df_fetes.astype(object)
+
+
+# ----------------------------------------------------------------------
+# 2bis. Chargement depuis Supabase (données déjà récupérées en JSON/dicts)
+# ----------------------------------------------------------------------
+#
+# Choix d'architecture : ces fonctions ne font AUCUN appel réseau elles-
+# mêmes. Elles reçoivent des listes de dicts telles que le JS (supabase-js,
+# qui gère déjà l'authentification et les policies RLS) les aura obtenues
+# et transmises à Python. Deux raisons à ce choix :
+#   1. Une fois ce script exécuté dans le navigateur via Pyodide, faire de
+#      vraies requêtes HTTP depuis Python-en-WebAssembly est nettement plus
+#      contraignant que depuis le JS qui gère déjà ça très bien.
+#   2. Ça garde une séparation nette : le JS s'occupe de la donnée
+#      (authentification, RLS, réseau), le Python s'occupe uniquement du
+#      calcul. Rien à changer ici si un jour la source de données change
+#      encore.
+
+LIGNES_DF_MEDECIN = [
+    "quota_acbl_garde", "quota_acbl_astreinte_j", "vendredi", "samedi", "veille_ferie",
+    "veille_lundi_ferie", "ferie", "lundi_ferie", "dimanche", "astreinte", "total_astreinte",
+    "total_astreinte_ferie", "total_astreinte_pondere", "total_eq_ven", "total_eq_ven_pondere",
+    "total_eq_sam", "total_eq_sam_pondere", "total_garde", "grand_total",
+]
+
+TYPES_FETE = ["24dec", "25dec", "31dec", "01ja", "astrNoel", "astrAn"]
+
+
+def construire_df_medecin(profils: list) -> pd.DataFrame:
+    """Construit df_medecin à partir des profils Supabase.
+
+    `profils` : liste de dicts {"initiales", "quota_acbl_garde", "quota_acbl_astreinte_j"},
+    un par médecin actif (requête sur `profiles` filtrée sur initiales non nulles).
+    """
+    medecins = [p["initiales"] for p in profils]
+    df_medecin = pd.DataFrame(0, index=LIGNES_DF_MEDECIN, columns=medecins, dtype=object)
+    for p in profils:
+        df_medecin.loc["quota_acbl_garde", p["initiales"]] = p.get("quota_acbl_garde") or 0
+        df_medecin.loc["quota_acbl_astreinte_j", p["initiales"]] = p.get("quota_acbl_astreinte_j") or 0
+    return df_medecin
+
+
+def construire_df_conges(conges: list, annee: int) -> pd.DataFrame:
+    """Construit df_conges_medecin à partir des congés Supabase.
+
+    `conges` : liste de dicts {"initiales", "date_debut", "date_fin"}
+    (jointure `conges_previsionnels` -> `profiles`, comme dans le panneau admin du HTML).
+    `annee` : ajoutée telle quelle sur chaque ligne pour garder la compatibilité
+    avec `med_absent`, qui filtre sur une colonne "Année" (héritage du format Excel).
+    """
+    lignes = [{
+        "Nom": c["initiales"],
+        "Début congé": c["date_debut"],
+        "Fin congé": c["date_fin"],
+        "Année": annee,
+    } for c in conges]
+    return pd.DataFrame(lignes, columns=["Nom", "Début congé", "Fin congé", "Année"])
+
+
+def construire_df_fetes(memoire: list, medecins: list) -> pd.DataFrame:
+    """Construit df_fetes à partir de la table Supabase `memoire_fetes`.
+
+    `memoire` : liste de dicts {"initiales", "type_fete", "derniere_annee"}.
+    `medecins` : liste des initiales actives (pour que chacun ait une ligne,
+    même sans historique).
+    """
+    df_fetes = pd.DataFrame(0, index=medecins, columns=TYPES_FETE, dtype=object)
+    for m in memoire:
+        if m["initiales"] in df_fetes.index and m["type_fete"] in TYPES_FETE:
+            df_fetes.loc[m["initiales"], m["type_fete"]] = str(m["derniere_annee"])
+    return df_fetes
+
+
+def exporter_resultats_json(df_calendar: pd.DataFrame, df_medecin: pd.DataFrame, df_fetes: pd.DataFrame) -> dict:
+    """Prépare les résultats sous forme de structures JSON-sérialisables, prêtes
+    à être renvoyées au JS pour écriture dans Supabase (`gardes_resultats`,
+    `memoire_fetes`) et pour affichage (statistiques par médecin).
+
+    Retourne un dict :
+      - "gardes" : liste de {"date", "role", "initiales"} -> table gardes_resultats
+      - "memoire_fetes" : liste de {"initiales", "type_fete", "derniere_annee"} -> upsert memoire_fetes
+      - "statistiques" : {medecin: {ligne: valeur}} -> affichage des stats par médecin
+    """
+    gardes = []
+    for _, row in df_calendar.iterrows():
+        for role in ("garde", "astreinte"):
+            valeur = row[role]
+            if pd.notna(valeur) and valeur not in (0, "error"):
+                gardes.append({"date": row["date"], "role": role, "initiales": valeur})
+
+    memoire = []
+    for med in df_fetes.index:
+        for type_fete in df_fetes.columns:
+            valeur = df_fetes.loc[med, type_fete]
+            if valeur not in (0, "0"):
+                memoire.append({"initiales": med, "type_fete": type_fete, "derniere_annee": str(valeur)})
+
+    lignes_obsoletes = ["liste_date", "vacances_prevues", "absences_prevues", "quota_dimanche",
+                         "jour_bip", "veille_lundi_ferie", "dimanche", "lundi_ferie", "total_garde"]
+    df_stats = df_medecin.drop(index=[l for l in lignes_obsoletes if l in df_medecin.index])
+
+    return {"gardes": gardes, "memoire_fetes": memoire, "statistiques": df_stats.to_dict()}
+
+
+def generer_campagne_supabase(profils, conges, memoire_fetes, date_debut_campagne, date_fin_campagne,
+                               fenetre_width=4, liste_immunise_debut_annee=None, list_ajout=None,
+                               exception_fenetre_width=None):
+    """Variante Supabase de `generer_campagne`. Reçoit des données déjà chargées
+    (listes de dicts telles que fournies par le JS après requête Supabase) au lieu
+    de lire des fichiers Excel.
+
+    Retourne (df_calendar, df_medecin, df_fetes, incidents, anomalies, resultats_json).
+    `resultats_json` est prêt à être renvoyé au JS (voir `exporter_resultats_json`).
+    """
+    df_calendar, annee = generer_calendrier(date_debut_campagne, date_fin_campagne)
+    df_medecin = construire_df_medecin(profils)
+    df_conges_medecin = construire_df_conges(conges, annee)
+    liste_med = df_medecin.columns.tolist()
+    df_fetes = construire_df_fetes(memoire_fetes, liste_med)
+
+    if list_ajout:
+        df_calendar, df_medecin = positionner_prealablement(df_calendar, df_medecin, list_ajout)
+
+    df_calendar, df_medecin, df_fetes, incidents = generer_repartition_annuelle(
+        df_calendar, df_medecin, df_conges_medecin, df_fetes, annee, liste_med,
+        fenetre_width=fenetre_width,
+        liste_immunise_debut_annee=liste_immunise_debut_annee,
+        exception_fenetre_width=exception_fenetre_width,
+    )
+
+    anomalies = verifier_coherence(df_calendar, df_medecin, df_conges_medecin, df_fetes, annee)
+    resultats = exporter_resultats_json(df_calendar, df_medecin, df_fetes)
+
+    return df_calendar, df_medecin, df_fetes, incidents, anomalies, resultats
 
 
 def positionner_prealablement(df_calendar: pd.DataFrame, df_medecin: pd.DataFrame, list_ajout: list):
@@ -708,7 +856,9 @@ def generer_campagne(annee, dossier=".", fenetre_width=4,
     """Orchestration complète : charge les données, positionne les gardes
     fixées à l'avance, génère la répartition, vérifie la cohérence, exporte.
     """
-    df_calendar = generer_calendrier(annee)
+    date_debut_campagne = "01-02-{0}".format(annee)
+    date_fin_campagne = "01-11-{0}".format(annee + 1)  # borne incluse : équivalent à l'ancienne borne exclue du 12/01
+    df_calendar, _ = generer_calendrier(date_debut_campagne, date_fin_campagne)
     df_medecin = charger_medecins(annee, dossier)
     df_conges_medecin = charger_conges(annee, dossier)
     df_fetes = charger_memoire_fetes(annee, dossier)
