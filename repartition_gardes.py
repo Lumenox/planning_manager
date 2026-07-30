@@ -15,7 +15,7 @@ ci-dessous (validés explicitement avant ce nettoyage).
 CHANGELOG par rapport au notebook original
 --------------------------------------------
 1. `choix_med` : suppression du `.format(jour)` mort sur la chaîne
-   "quota_acbl_astreinte_j" (n'avait aucun effet, résidu d'une
+   "quota_astreinte_j" (n'avait aucun effet, résidu d'une
    ancienne version).
 2. `faire_don_astreinte` (ex-partie de `reprise_garde`) : l'astreinte
    n'était pas prise en charge par `reprise_garde` (seules les gardes
@@ -214,7 +214,7 @@ def charger_memoire_fetes(annee: int, dossier: str = ".") -> pd.DataFrame:
 #      encore.
 
 LIGNES_DF_MEDECIN = [
-    "quota_acbl_garde", "quota_acbl_astreinte_j", "vendredi", "samedi", "veille_ferie",
+    "quota_garde", "quota_astreinte_j", "vendredi", "samedi", "veille_ferie",
     "veille_lundi_ferie", "ferie", "lundi_ferie", "dimanche", "astreinte", "total_astreinte",
     "total_astreinte_ferie", "total_astreinte_pondere", "total_eq_ven", "total_eq_ven_pondere",
     "total_eq_sam", "total_eq_sam_pondere", "total_garde", "grand_total",
@@ -226,14 +226,14 @@ TYPES_FETE = ["24dec", "25dec", "31dec", "01ja", "astrNoel", "astrAn"]
 def construire_df_medecin(profils: list) -> pd.DataFrame:
     """Construit df_medecin à partir des profils Supabase.
 
-    `profils` : liste de dicts {"initiales", "quota_acbl_garde", "quota_acbl_astreinte_j"},
+    `profils` : liste de dicts {"initiales", "quota_garde", "quota_astreinte_j"},
     un par médecin actif (requête sur `profiles` filtrée sur initiales non nulles).
     """
     medecins = [p["initiales"] for p in profils]
     df_medecin = pd.DataFrame(0, index=LIGNES_DF_MEDECIN, columns=medecins, dtype=object)
     for p in profils:
-        df_medecin.loc["quota_acbl_garde", p["initiales"]] = p.get("quota_acbl_garde") or 0
-        df_medecin.loc["quota_acbl_astreinte_j", p["initiales"]] = p.get("quota_acbl_astreinte_j") or 0
+        df_medecin.loc["quota_garde", p["initiales"]] = p.get("quota_garde") or 0
+        df_medecin.loc["quota_astreinte_j", p["initiales"]] = p.get("quota_astreinte_j") or 0
     return df_medecin
 
 
@@ -394,23 +394,23 @@ def choix_med(jour: str, liste_med: list, liste_exclu: list, df_medecin: pd.Data
 
     if jour == "astreinte":
         for med in candidats:
-            if df_medecin[med]["quota_acbl_astreinte_j"] != 0:
+            if df_medecin[med]["quota_astreinte_j"] != 0:
                 df_pond[med] = df_medecin[med]["total_astreinte_pondere"]
 
     if jour in ("ferie", "lundi_ferie", "dimanche"):
         for med in candidats:
-            if df_medecin[med]["quota_acbl_garde"] != 0:
+            if df_medecin[med]["quota_garde"] != 0:
                 # NB : volontairement non pondéré par quota, voir CHANGELOG en tête de fichier.
                 df_pond[med] = df_medecin[med]["ferie"]
 
     if jour in ("veille_ferie", "vendredi"):
         for med in candidats:
-            if df_medecin[med]["quota_acbl_garde"] != 0:
+            if df_medecin[med]["quota_garde"] != 0:
                 df_pond[med] = df_medecin[med]["total_eq_ven_pondere"]
 
     if jour in ("samedi", "veille_lundi_ferie"):
         for med in candidats:
-            if df_medecin[med]["quota_acbl_garde"] != 0:
+            if df_medecin[med]["quota_garde"] != 0:
                 df_pond[med] = df_medecin[med]["total_eq_sam_pondere"]
 
     df_pond = df_pond[df_pond == df_pond.loc["nb_pondere"].min()].dropna(axis=1)
@@ -428,22 +428,22 @@ def recalculer_ponderations(df_medecin: pd.DataFrame) -> pd.DataFrame:
     et `correction_ponctuelle`, pour ne jamais dupliquer cette logique.
     """
     for med in df_medecin.columns:
-        if df_medecin.loc["quota_acbl_astreinte_j", med] != 0:
+        if df_medecin.loc["quota_astreinte_j", med] != 0:
             df_medecin.loc["total_astreinte_pondere", med] = (
                 df_medecin.loc["total_astreinte", med] * 2 + df_medecin.loc["total_astreinte_ferie", med]
-            ) / df_medecin.loc["quota_acbl_astreinte_j", med]
-        if df_medecin.loc["quota_acbl_garde", med] != 0:
+            ) / df_medecin.loc["quota_astreinte_j", med]
+        if df_medecin.loc["quota_garde", med] != 0:
             df_medecin.loc["total_eq_ven", med] = (
                 df_medecin.loc["vendredi", med] + df_medecin.loc["veille_ferie", med]
             )
             df_medecin.loc["total_eq_ven_pondere", med] = (
-                df_medecin.loc["total_eq_ven", med] / df_medecin.loc["quota_acbl_garde", med]
+                df_medecin.loc["total_eq_ven", med] / df_medecin.loc["quota_garde", med]
             )
             df_medecin.loc["total_eq_sam", med] = (
                 df_medecin.loc["samedi", med] + df_medecin.loc["veille_lundi_ferie", med]
             )
             df_medecin.loc["total_eq_sam_pondere", med] = (
-                df_medecin.loc["total_eq_sam", med] / df_medecin.loc["quota_acbl_garde", med]
+                df_medecin.loc["total_eq_sam", med] / df_medecin.loc["quota_garde", med]
             )
     df_medecin.loc["total_garde"] = df_medecin.loc["total_eq_ven_pondere"] + df_medecin.loc["total_eq_sam_pondere"]
     df_medecin.loc["grand_total"] = df_medecin.loc["total_garde"] + df_medecin.loc["total_astreinte_pondere"]
