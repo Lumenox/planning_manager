@@ -86,7 +86,6 @@ def generer_calendrier(date_debut_campagne, date_fin_campagne) -> tuple:
     (25/12/annee) et du Nouvel An (01/01/annee+1) : les bornes doivent
     donc couvrir ces deux dates.
     """
-    cal = France()
 
     start = pd.Timestamp(date_debut_campagne)
     end = pd.Timestamp(date_fin_campagne)
