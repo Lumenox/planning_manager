@@ -60,11 +60,11 @@ Ce qui n'a PAS changé (comportement volontairement préservé)
 
 import ast
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 import numpy as np
 import pandas as pd
-from workalendar.europe import France
+
 
 
 # ======================================================================
@@ -127,9 +127,9 @@ def generer_calendrier(date_debut_campagne, date_fin_campagne) -> tuple:
 
     # jours fériés (+ 1er janvier de l'année suivante)
     list_ferie = set(
-        [d[0].strftime("%m-%d-%Y") for d in cal.holidays(annee)]
-        + [[d[0].strftime("%m-%d-%Y") for d in cal.holidays(annee + 1)][0]]
-    )
+    [d.strftime("%m-%d-%Y") for d in jours_feries_france(annee)]
+    + [jours_feries_france(annee + 1)[0].strftime("%m-%d-%Y")]
+)
     df_calendar.loc[df_calendar["date"].isin(list_ferie), "ferie"] = 1
 
     for i in df_calendar.loc[df_calendar["date"].isin(list_ferie)].index:
@@ -175,6 +175,50 @@ def generer_calendrier(date_debut_campagne, date_fin_campagne) -> tuple:
     ] = 0
 
     return df_calendar, annee
+
+
+# ======================================================================
+# 1bis. Générer les dates fériés en france
+# ======================================================================
+
+
+def _paques(annee: int) -> date:
+    """Dimanche de Pâques (algorithme de Meeus/Jones/Butcher, calendrier grégorien)."""
+    a = annee % 19
+    b = annee // 100
+    c = annee % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mois = (h + l - 7 * m + 114) // 31
+    jour = ((h + l - 7 * m + 114) % 31) + 1
+    return date(annee, mois, jour)
+
+
+def jours_feries_france(annee: int) -> list:
+    """Les 11 jours fériés légaux français pour `annee`, triés — mêmes dates
+    que workalendar.europe.France().holidays(annee), calculées directement
+    (pas de dépendance externe)."""
+    p = _paques(annee)
+    return sorted([
+        date(annee, 1, 1),               # Jour de l'an
+        p + timedelta(days=1),           # Lundi de Pâques
+        date(annee, 5, 1),               # Fête du Travail
+        date(annee, 5, 8),               # Victoire 1945
+        p + timedelta(days=39),          # Ascension
+        p + timedelta(days=50),          # Lundi de Pentecôte
+        date(annee, 7, 14),              # Fête nationale
+        date(annee, 8, 15),              # Assomption
+        date(annee, 11, 1),              # Toussaint
+        date(annee, 11, 11),             # Armistice
+        date(annee, 12, 25),             # Noël
+    ])
 
 # ======================================================================
 # 2. Chargement des données
