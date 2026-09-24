@@ -90,6 +90,15 @@ def generer_calendrier(date_debut_campagne, date_fin_campagne) -> tuple:
     start = pd.Timestamp(date_debut_campagne)
     end = pd.Timestamp(date_fin_campagne)
     annee = start.year
+
+    if start.month == 1 and start.day == 1:
+        raise ValueError(
+            "La date de début de campagne ({0}) ne peut pas être le 1er janvier : le 1er "
+            "janvier est toujours férié, et le calcul de sa veille (\"veille_ferie\") "
+            "tomberait hors du calendrier de campagne. Utilise le 2 janvier comme borne de "
+            "début (voir campagne_config.date_debut_campagne).".format(date_debut_campagne)
+        )
+
     dates = [start + timedelta(days=x) for x in range((end - start).days + 1)]
     dates_str = [d.strftime("%m-%d-%Y") for d in dates]
 
