@@ -319,16 +319,25 @@ def construire_df_fetes(memoire: list, medecins: list) -> pd.DataFrame:
             df_fetes.loc[m["initiales"], m["type_fete"]] = str(m["derniere_annee"])
     return df_fetes
 
+def _valeur_affichable(valeur):
+    """None si la cellule est vide/non attribuée (NaN, 0, ou "error" -> créneau
+    resté en incident), sinon la valeur telle quelle (initiales du médecin)."""
+    if pd.isna(valeur) or valeur in (0, "error"):
+        return None
+    return valeur
+
 
 def exporter_resultats_json(df_calendar: pd.DataFrame, df_medecin: pd.DataFrame, df_fetes: pd.DataFrame) -> dict:
     """Prépare les résultats sous forme de structures JSON-sérialisables, prêtes
     à être renvoyées au JS pour écriture dans Supabase (`gardes_resultats`,
-    `memoire_fetes`) et pour affichage (statistiques par médecin).
+    `memoire_fetes`) et pour affichage (calendrier et statistiques par médecin).
 
     Retourne un dict :
       - "gardes" : liste de {"date", "role", "initiales"} -> table gardes_resultats
       - "memoire_fetes" : liste de {"initiales", "type_fete", "derniere_annee"} -> upsert memoire_fetes
-      - "statistiques" : {medecin: {ligne: valeur}} -> affichage des stats par médecin
+      - "calendrier" : liste de {"WE_N", "date", "jour_semaine", "garde", "astreinte"},
+        un élément par créneau effectivement attribué -> vue d'ensemble avant enregistrement
+      - "statistiques" : {ligne: {medecin: valeur}} -> affichage des stats par médecin
     """
     gardes = []
     for _, row in df_calendar.iterrows():
@@ -344,12 +353,31 @@ def exporter_resultats_json(df_calendar: pd.DataFrame, df_medecin: pd.DataFrame,
             if valeur not in (0, "0"):
                 memoire.append({"initiales": med, "type_fete": type_fete, "derniere_annee": str(valeur)})
 
+    calendrier = []
+    for _, row in df_calendar.iterrows():
+        garde = _valeur_affichable(row["garde"])
+        astreinte = _valeur_affichable(row["astreinte"])
+        if garde is None and astreinte is None:
+            continue
+        we_n = row["WE_N"]
+        calendrier.append({
+            "WE_N": None if pd.isna(we_n) else int(we_n),
+            "date": row["date"],
+            "jour_semaine": row["name_day"],
+            "garde": garde,
+            "astreinte": astreinte,
+        })
+
     lignes_obsoletes = ["liste_date", "vacances_prevues", "absences_prevues", "quota_dimanche",
                          "jour_bip", "veille_lundi_ferie", "dimanche", "lundi_ferie", "total_garde"]
     df_stats = df_medecin.drop(index=[l for l in lignes_obsoletes if l in df_medecin.index])
 
-    return {"gardes": gardes, "memoire_fetes": memoire, "statistiques": df_stats.to_dict()}
-
+    return {
+        "gardes": gardes,
+        "memoire_fetes": memoire,
+        "calendrier": calendrier,
+        "statistiques": df_stats.T.to_dict(),
+    }
 
 def generer_campagne_supabase(profils, conges, memoire_fetes, date_debut_campagne, date_fin_campagne,
                                fenetre_width=4, liste_immunise_debut_annee=None, list_ajout=None,
