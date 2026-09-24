@@ -706,7 +706,7 @@ def generer_repartition_annuelle(df_calendar, df_medecin, df_conges_medecin, df_
 
     print("    attribution des autres WE:")                                     
     for we_number in we_order:
-        print("       WE:", we_number)   
+        print("       WE:", we_number, df_calendar.loc[df_calendar["WE_N"] == we_number, "date"].tolist())   
         list_immune = []
         largeur = fenetre_width
         if we_number in (1, 2):
