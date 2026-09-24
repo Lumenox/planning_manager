@@ -684,14 +684,15 @@ def generer_repartition_annuelle(df_calendar, df_medecin, df_conges_medecin, df_
             we_number, fenetre_width, list(deja_annee_davant), df_calendar, df_fetes,
             df_medecin, df_conges_medecin, annee, liste_med,
         )
-
+    print("    astr_noel et astr_an réussis: ", [astr_noel_n, astr_an_n])
+   
     # charge de congés par week-end, pour traiter les plus contraints en premier
     for number in range(1, int(df_calendar["WE_N"].max())):
         for date in df_calendar.loc[df_calendar["WE_N"] == number, "date"]:
             immune = med_absent(pd.Timestamp(date), df_medecin, [], df_conges_medecin, annee)
             df_calendar.loc[df_calendar["date"] == date, "N_conge"] = len(immune)
             df_calendar.loc[df_calendar["date"] == date, "conge"] = str(immune)
-
+    print("    WE les plus contraignants réussis")
     # le vendredi précédant un samedi hérite du même niveau de congé que le samedi
     for i in df_calendar[df_calendar["name_day"] == "sam"].index:
         df_calendar.loc[i - 1, "conge"] = df_calendar.loc[i, "conge"]
@@ -702,7 +703,10 @@ def generer_repartition_annuelle(df_calendar, df_medecin, df_conges_medecin, df_
     we_order = [n for n in we_order if n not in (astr_noel_n, astr_an_n)]
 
     incidents = []  # (type_creneau, numero_WE) où aucun médecin n'était disponible
+
+    print("    attribution des autres WE:")                                     
     for we_number in we_order:
+        print("       WE:", we_number)   
         list_immune = []
         largeur = fenetre_width
         if we_number in (1, 2):
