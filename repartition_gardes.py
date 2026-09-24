@@ -728,7 +728,10 @@ def generer_repartition_annuelle(df_calendar, df_medecin, df_conges_medecin, df_
     we_order = df_calendar.loc[
         df_calendar[df_calendar["name_day"] == "sam"].sort_values(by="N_conge", ascending=False).index
     ]["WE_N"].values.tolist()
-    we_order = [n for n in we_order if n not in (astr_noel_n, astr_an_n)]
+    # Génération initiale de we_order
+    we_order_raw = df_calendar.loc[
+        df_calendar[df_calendar["name_day"] == "sam"].sort_values(by="N_conge", ascending=False).index
+    ]["WE_N"].values.tolist()
     # Vérification de la présence de NaN
     if any(pd.isna(n) for n in we_order_raw):
         print("ATTENTION : NaN détecté dans la liste des WE, vérifiez les bornes de la campagne (ne pas commencer/finir sur un férié ou un week-end). Elimination du Nan néanmoins pour ne pas bloquer l'exécution")
