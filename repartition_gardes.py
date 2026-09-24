@@ -517,7 +517,8 @@ def repartition(WE_number, fenetre_width, list_immune, df_calendar, df_fetes, df
     étroite pour les combler.
     """
     incidents = []
-
+                    
+    WE_number = int(WE_number)  # WE_N peut être stocké en float selon les cellules ; range() exige un int
     we_max = df_calendar["WE_N"].max()
     we_range = [v for v in range(WE_number - fenetre_width + 1, WE_number + fenetre_width)
                 if 1 <= v < we_max]
