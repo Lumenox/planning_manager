@@ -730,7 +730,7 @@ def generer_repartition_annuelle(df_calendar, df_medecin, df_conges_medecin, df_
     ]["WE_N"].values.tolist()
 
     # Vérification de la présence de NaN
-    if any(pd.isna(n) for n in we_order:
+    if any(pd.isna(n) for n in we_order):
         print("ATTENTION : NaN détecté dans la liste des WE, vérifiez les bornes de la campagne (ne pas commencer/finir sur un férié ou un week-end). Elimination du Nan néanmoins pour ne pas bloquer l'exécution")
 
     # Nettoyage pour ne pas bloquer l'exécution
