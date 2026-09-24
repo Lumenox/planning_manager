@@ -701,12 +701,17 @@ def generer_repartition_annuelle(df_calendar, df_medecin, df_conges_medecin, df_
         df_calendar[df_calendar["name_day"] == "sam"].sort_values(by="N_conge", ascending=False).index
     ]["WE_N"].values.tolist()
     we_order = [n for n in we_order if n not in (astr_noel_n, astr_an_n)]
+    # Vérification de la présence de NaN
+    if any(pd.isna(n) for n in we_order_raw):
+        print("ATTENTION : NaN détecté dans la liste des WE, vérifiez les bornes de la campagne (ne pas commencer/finir sur un férié ou un week-end). Elimination du Nan néanmoins pour ne pas bloquer l'exécution")
 
+    # Nettoyage pour ne pas bloquer l'exécution
+    we_order = [n for n in we_order_raw if pd.notna(n) and n not in (astr_noel_n, astr_an_n)]
     incidents = []  # (type_creneau, numero_WE) où aucun médecin n'était disponible
 
     print("    attribution des autres WE:")                                     
     for we_number in we_order:
-        print("       WE:", we_number, df_calendar.loc[df_calendar["WE_N"] == we_number, "date"].tolist())   
+        print("       WE:", we_number)   
         list_immune = []
         largeur = fenetre_width
         if we_number in (1, 2):
