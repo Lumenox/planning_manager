@@ -23,3 +23,7 @@ grand_total = total_garde + total_astreinte_pondere
 
 
 Le principe : ces pondérés sont des ratios brut / quota. À chaque créneau, choix_med choisit le médecin éligible dont le ratio est le plus bas — donc plus le quota d'un médecin est élevé, plus il est censé absorber de gardes/astreintes avant de « rattraper » les autres. C'est typiquement une fraction d'ETP (équivalent temps plein) ou un multiplicateur métier que tu fixes toi-même (0 = ne fait pas ce type de créneau, 1 = base pleine, 0,5 = mi-temps, etc.)
+
+
+Un médecin qui a déjà fait un événement de fin d'année donné (ex. 25/12) ne le refera plus jamais, sans limite de temps.
+Un médecin qui a fait n'importe quel événement de fin d'année une année N est totalement exclu de tous les événements de fin d'année l'année N+1 (repos total d'un an), même pour des créneaux différents de celui qu'il avait fait.
