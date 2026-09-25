@@ -408,7 +408,7 @@ def generer_campagne_supabase(profils, conges, memoire_fetes, date_debut_campagn
     anomalies = verifier_coherence(df_calendar, df_medecin, df_conges_medecin, df_fetes, annee)
     resultats = exporter_resultats_json(df_calendar, df_medecin, df_fetes)
 
-    return df_calendar, df_medecin, df_fetes, incidents, anomalies, resultats
+    return df_calendar, df_medecin, df_fetes, incidents, anomalies, resultats, df_conges_medecin, annee
 
 
 def positionner_prealablement(df_calendar: pd.DataFrame, df_medecin: pd.DataFrame, list_ajout: list):
@@ -766,6 +766,26 @@ def calendar_search(df_calendar: pd.DataFrame, med: str, type_jour: str) -> pd.D
     """Renvoie les dates où `med` occupe le rôle `type_jour` ("garde" ou "astreinte")."""
     return df_calendar.loc[df_calendar[type_jour] == med, ["date", "name_day", "WE_N"]]
 
+def dates_echangeables(df_calendar: pd.DataFrame, med: str, type_jour: str) -> pd.DataFrame:
+    """Comme `calendar_search`, mais restreint aux créneaux "simples" qu'on peut
+    réattribuer sans toucher aux règles délicates de fin d'année :
+    - garde : seulement vendredi, veille_ferie ou samedi — jamais le jour férié
+      lui-même (25/12, 01/01…), choisi via la mémoire des fêtes.
+    - astreinte : seulement un week-end "double" — jamais un week-end "triple"
+      (accolé à un férié, lui aussi concerné par la mémoire des fêtes).
+    """
+    base = df_calendar.loc[
+        df_calendar[type_jour] == med,
+        ["date", "name_day", "WE_N", "vendredi", "veille_ferie", "samedi",
+         "ferie", "lundi_ferie", "dimanche", "astreinte_double"],
+    ]
+    if type_jour == "garde":
+        masque = (
+            (base["vendredi"] == 1) | (base["veille_ferie"] == 1) | (base["samedi"] == 1)
+        ) & (base["ferie"] != 1) & (base["lundi_ferie"] != 1) & (base["dimanche"] != 1)
+    else:
+        masque = base["astreinte_double"] == 1
+    return base.loc[masque, ["date", "name_day", "WE_N"]]
 
 def gen_liste_immune(date_a_changer, fenetre_width, list_immune, df_calendar, df_fetes, df_medecin):
     """Reconstruit la liste d'immunité applicable à `date_a_changer`."""
@@ -788,7 +808,44 @@ def gen_liste_immune(date_a_changer, fenetre_width, list_immune, df_calendar, df
         list_immune = list_immune + ast.literal_eval(conge_ce_jour)
     return list_immune
 
+def don_possible(df_calendar, df_medecin, df_fetes, df_conges_medecin, annee,
+                  date, type_slot, receveur, fenetre_width=4) -> bool:
+    """Vrai si `receveur` peut recevoir le créneau `date` (fenêtre de récupération
+    + congés déclarés, mêmes règles qu'à la génération). Ne vérifie PAS la mémoire
+    des fêtes : à n'utiliser que sur des créneaux "échangeables" (dates_echangeables),
+    qui excluent déjà fériés et astreintes triples."""
+    exclus = gen_liste_immune(date, fenetre_width, [], df_calendar, df_fetes, df_medecin)
+    exclus = med_absent(pd.Timestamp(date), df_medecin, exclus, df_conges_medecin, annee)
+    return receveur not in exclus
 
+
+def preparer_echanges(df_calendar, df_medecin, df_fetes, df_conges_medecin, annee,
+                       med_a, med_b, fenetre_width=4) -> dict:
+    """Données d'affichage pour la section "Proposer des échanges" : pour chaque
+    médecin, ses créneaux échangeables et si l'autre peut les recevoir."""
+    def creneaux(med, autre):
+        lignes = []
+        we_vus = set()
+        for type_slot in ("garde", "astreinte"):
+            for _, row in dates_echangeables(df_calendar, med, type_slot).iterrows():
+                if type_slot == "astreinte":
+                    if row["WE_N"] in we_vus:
+                        continue
+                    we_vus.add(row["WE_N"])
+                lignes.append({
+                    "date": row["date"],
+                    "name_day": row["name_day"],
+                    "WE_N": None if pd.isna(row["WE_N"]) else int(row["WE_N"]),
+                    "type_slot": type_slot,
+                    "don_possible": don_possible(df_calendar, df_medecin, df_fetes,
+                                                  df_conges_medecin, annee,
+                                                  row["date"], type_slot, autre, fenetre_width),
+                })
+        lignes.sort(key=lambda l: pd.Timestamp(l["date"]))
+        return lignes
+
+    return {"a": creneaux(med_a, med_b), "b": creneaux(med_b, med_a)}
+                          
 def faire_don_garde(df_calendar, df_medecin, date, donateur, receveur):
     """Transfère une garde (vendredi/samedi/veille de férié/férié/dimanche...)
     d'une date précise du `donateur` vers le `receveur`."""
@@ -866,7 +923,7 @@ def suggerer_dons(df_calendar, df_medecin, df_conges_medecin, df_fetes, annee,
                             if m not in exclus_de_modif and df_medecin.loc[titre, m] <= seuil_down]
 
         for med_dim in med_a_diminuer:
-            dates_dim = calendar_search(df_calendar, med_dim, keyword)
+            dates_dim = dates_echangeables(df_calendar, med_dim, keyword)
             for _, row in dates_dim.iterrows():
                 date, jour, we_n = row["date"], row["name_day"], row["WE_N"]
                 cle_dedup = (keyword, we_n if keyword == "astreinte" else date, med_dim)
