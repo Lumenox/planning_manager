@@ -785,7 +785,7 @@ def dates_echangeables(df_calendar: pd.DataFrame, med: str, type_jour: str) -> p
         ) & (base["ferie"] != 1) & (base["lundi_ferie"] != 1) & (base["dimanche"] != 1)
     else:
         masque = base["astreinte_double"] == 1
-    return base.loc[masque, ["date", "name_day", "WE_N"]]
+    return base.loc[masque, ["date", "name_day", "WE_N", "vendredi", "veille_ferie", "samedi"]]
 
 def gen_liste_immune(date_a_changer, fenetre_width, list_immune, df_calendar, df_fetes, df_medecin):
     """Reconstruit la liste d'immunité applicable à `date_a_changer`."""
@@ -808,21 +808,24 @@ def gen_liste_immune(date_a_changer, fenetre_width, list_immune, df_calendar, df
         list_immune = list_immune + ast.literal_eval(conge_ce_jour)
     return list_immune
 
-def don_possible(df_calendar, df_medecin, df_fetes, df_conges_medecin, annee,
-                  date, type_slot, receveur, fenetre_width=4) -> bool:
-    """Vrai si `receveur` peut recevoir le créneau `date` (fenêtre de récupération
-    + congés déclarés, mêmes règles qu'à la génération). Ne vérifie PAS la mémoire
-    des fêtes : à n'utiliser que sur des créneaux "échangeables" (dates_echangeables),
-    qui excluent déjà fériés et astreintes triples."""
-    exclus = gen_liste_immune(date, fenetre_width, [], df_calendar, df_fetes, df_medecin)
-    exclus = med_absent(pd.Timestamp(date), df_medecin, exclus, df_conges_medecin, annee)
-    return receveur not in exclus
-
+#def don_possible(df_calendar, df_medecin, df_fetes, df_conges_medecin, annee,
+#                  date, type_slot, receveur, fenetre_width=4) -> bool:
+#    """Vrai si `receveur` peut recevoir le créneau `date` (fenêtre de récupération
+#    + congés déclarés, mêmes règles qu'à la génération). Ne vérifie PAS la mémoire
+#    des fêtes : à n'utiliser que sur des créneaux "échangeables" (dates_echangeables),
+#    qui excluent déjà fériés et astreintes triples."""
+#    exclus = gen_liste_immune(date, fenetre_width, [], df_calendar, df_fetes, df_medecin)
+#    exclus = med_absent(pd.Timestamp(date), df_medecin, exclus, df_conges_medecin, annee)
+#    return receveur not in exclus
 
 def preparer_echanges(df_calendar, df_medecin, df_fetes, df_conges_medecin, annee,
-                       med_a, med_b, fenetre_width=4) -> dict:
+                       med_a, med_b, fenetre_width=4, max_suggestions=3) -> dict:
     """Données d'affichage pour la section "Proposer des échanges" : pour chaque
-    médecin, ses créneaux échangeables et si l'autre peut les recevoir."""
+    médecin, ses créneaux échangeables, si l'autre médecin sélectionné peut les
+    recevoir, et sinon jusqu'à `max_suggestions` alternatives triées par charge
+    pondérée croissante (les médecins qui en ont le moins en priorité)."""
+    liste_med = df_medecin.columns.tolist()
+
     def creneaux(med, autre):
         lignes = []
         we_vus = set()
@@ -832,14 +835,30 @@ def preparer_echanges(df_calendar, df_medecin, df_fetes, df_conges_medecin, anne
                     if row["WE_N"] in we_vus:
                         continue
                     we_vus.add(row["WE_N"])
+                    col_pond = "total_astreinte_pondere"
+                    col_quota = "quota_astreinte_j"
+                else:
+                    col_pond = "total_eq_sam_pondere" if row["samedi"] == 1 else "total_eq_ven_pondere"
+                    col_quota = "quota_garde"
+
+                exclus = gen_liste_immune(row["date"], fenetre_width, [], df_calendar, df_fetes, df_medecin)
+                exclus = med_absent(pd.Timestamp(row["date"]), df_medecin, exclus, df_conges_medecin, annee)
+
+                don_possible = autre not in exclus
+                alternatives = []
+                if not don_possible:
+                    candidats = [m for m in liste_med
+                                 if m not in exclus and m != med and df_medecin.loc[col_quota, m] != 0]
+                    candidats.sort(key=lambda m: df_medecin.loc[col_pond, m])
+                    alternatives = candidats[:max_suggestions]
+
                 lignes.append({
                     "date": row["date"],
                     "name_day": row["name_day"],
                     "WE_N": None if pd.isna(row["WE_N"]) else int(row["WE_N"]),
                     "type_slot": type_slot,
-                    "don_possible": don_possible(df_calendar, df_medecin, df_fetes,
-                                                  df_conges_medecin, annee,
-                                                  row["date"], type_slot, autre, fenetre_width),
+                    "don_possible": don_possible,
+                    "alternatives": alternatives,
                 })
         lignes.sort(key=lambda l: pd.Timestamp(l["date"]))
         return lignes
