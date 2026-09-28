@@ -412,27 +412,60 @@ def generer_campagne_supabase(profils, conges, memoire_fetes, date_debut_campagn
 
 
 def positionner_prealablement(df_calendar: pd.DataFrame, df_medecin: pd.DataFrame, list_ajout: list):
-    """Positionne manuellement des gardes/astreintes fixées à l'avance.
+    """Positionne d'office des gardes/astreintes imposées avant la répartition.
 
-    list_ajout : liste de tuples (date "MM-JJ-AAAA", initiales médecin, "garde" ou "astreinte")
-    Ne pas utiliser pour un dimanche (géré automatiquement) ou un jour férié
-    (à positionner explicitement si besoin).
+    list_ajout : liste de (date "MM-JJ-AAAA", initiales du médecin, "garde" ou "astreinte").
+
+    Périmètre : week-ends "simples" uniquement (astreinte_double, sans férié accolé) :
+    - "garde" : le vendredi ou le samedi du week-end ;
+    - "astreinte" : le week-end entier (samedi + dimanche), la date donnée pouvant être
+      l'un ou l'autre.
+    Les jours fériés et les week-ends "triples" (donc Noël / Nouvel An) sont refusés :
+    la mémoire des fêtes n'est gérée que par la répartition automatique.
+
+    Les compteurs du médecin sont mis à jour puis les pondérations recalculées : un
+    créneau imposé compte dans l'équité comme s'il avait été tiré par l'algorithme.
     """
-    for date, med, type_slot in list_ajout:
-        df_calendar.loc[df_calendar["date"] == date, type_slot] = med
+    for date_str, med, type_slot in list_ajout:
+        if med not in df_medecin.columns:
+            raise ValueError(f"Créneau prédéfini du {date_str} : médecin {med!r} inconnu ou sans initiales.")
+        if type_slot not in ("garde", "astreinte"):
+            raise ValueError(f"Créneau prédéfini du {date_str} : type {type_slot!r} invalide.")
+
+        lignes = df_calendar.index[df_calendar["date"] == date_str]
+        if len(lignes) == 0:
+            raise ValueError(f"Créneau prédéfini : la date {date_str} est hors des bornes de la campagne.")
+        idx = lignes[0]
+        jour = df_calendar.loc[idx, "name_day"]
+
         if type_slot == "garde":
-            if df_calendar.loc[df_calendar["date"] == date, "vendredi"].item() == 1:
-                df_medecin.loc["vendredi", med] += 1
-            if df_calendar.loc[df_calendar["date"] == date, "samedi"].item() == 1:
-                df_medecin.loc["samedi", med] += 1
-        if type_slot == "astreinte":
-            df_medecin.loc["astreinte", med] += 1
-            if df_calendar.loc[df_calendar["date"] == date, "samedi"].item() == 1:
-                index_dim = df_calendar.loc[df_calendar["date"] == date].index + 1
-                df_calendar.loc[index_dim, type_slot] = med
-            else:
-                print("Attention : ne donner que des samedis à cette fonction pour une astreinte "
-                      "(le dimanche est ajouté automatiquement) ; jours fériés à traiter à part.")
+            if jour not in ("ven", "sam"):
+                raise ValueError(f"Garde prédéfinie du {date_str} : doit tomber un vendredi ou un samedi.")
+            idx_sam = idx + 1 if jour == "ven" else idx
+        else:
+            if jour not in ("sam", "dim"):
+                raise ValueError(f"Astreinte prédéfinie du {date_str} : doit tomber un samedi ou un dimanche.")
+            idx_sam = idx if jour == "sam" else idx - 1
+
+        if idx_sam not in df_calendar.index or df_calendar.loc[idx_sam, "astreinte_double"] != 1:
+            raise ValueError(
+                f"Créneau prédéfini du {date_str} : ce week-end n'est pas un week-end simple "
+                "(férié accolé, ou hors calendrier). Les fêtes et week-ends triples ne sont pas gérés ici."
+            )
+
+        if type_slot == "garde":
+            if pd.notna(df_calendar.loc[idx, "garde"]):
+                raise ValueError(f"Garde du {date_str} déjà prédéfinie ({df_calendar.loc[idx, 'garde']}).")
+            df_calendar.loc[idx, "garde"] = med
+            df_medecin.loc["vendredi" if jour == "ven" else "samedi", med] += 1
+        else:
+            bloc = df_calendar["WE_N"] == df_calendar.loc[idx_sam, "WE_N"]
+            if df_calendar.loc[bloc, "astreinte"].notna().any():
+                raise ValueError(f"Astreinte du week-end du {date_str} déjà prédéfinie.")
+            df_calendar.loc[bloc, "astreinte"] = med
+            df_medecin.loc["total_astreinte", med] += 1
+
+    recalculer_ponderations(df_medecin)
     return df_calendar, df_medecin
 
 
@@ -637,6 +670,13 @@ def repartition(WE_number, fenetre_width, list_immune, df_calendar, df_fetes, df
         ["total_astreinte", "vendredi", "samedi"],
         ["astreinte", "garde", "garde"],
     ):
+        deja = df_calendar.loc[selection, colonne]
+        if hasattr(deja, "any"):
+            deja_rempli = bool(deja.notna().any() and (deja != 0).any())
+        else:
+            deja_rempli = bool(pd.notna(deja) and deja != 0)
+        if deja_rempli:
+            continue  # créneau déjà attribué (prédéfini, ou garde de fête posée plus haut)
         date_temp = (df_calendar.loc[ven_index, "date"] if type_slot == "vendredi"
                      else df_calendar.loc[(df_calendar["WE_N"] == WE_number) & (df_calendar["name_day"] == "sam"), "date"].values[0])
         immune_conge = med_absent(pd.Timestamp(date_temp), df_medecin, [], df_conges_medecin, annee)
@@ -659,14 +699,14 @@ def repartition(WE_number, fenetre_width, list_immune, df_calendar, df_fetes, df
         if med_choisi == "error":
             incidents.append((type_slot, WE_number))
             continue
-
+        #bout de code redondant probable
         list_immune.append(med_choisi)
         if isinstance(df_calendar.loc[selection, colonne], str) or (
             hasattr(df_calendar.loc[selection, colonne], "any")
             and df_calendar.loc[selection, colonne].notna().any()
             and (df_calendar.loc[selection, colonne] != 0).any()
         ):
-            print(f"{type_slot} du WE {WE_number} ({colonne}) déjà rempli, ignoré.")
+            print(f"{type_slot} du WE {WE_number} ({colonne}) déjà rempli, ignoré.")  #bout de code redondant probable
         else:
             df_calendar.loc[selection, colonne] = med_choisi
             df_medecin.loc[ligne_medecin, med_choisi] += 1
