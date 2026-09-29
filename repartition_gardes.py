@@ -381,7 +381,7 @@ def exporter_resultats_json(df_calendar: pd.DataFrame, df_medecin: pd.DataFrame,
 
 def generer_campagne_supabase(profils, conges, memoire_fetes, date_debut_campagne, date_fin_campagne,
                                fenetre_width=4, liste_immunise_debut_annee=None, list_ajout=None,
-                               exception_fenetre_width=None):
+                               exception_fenetre_width=None,  nb_we_immunite_debut=2):
     """Variante Supabase de `generer_campagne`. Reçoit des données déjà chargées
     (listes de dicts telles que fournies par le JS après requête Supabase) au lieu
     de lire des fichiers Excel.
@@ -403,6 +403,7 @@ def generer_campagne_supabase(profils, conges, memoire_fetes, date_debut_campagn
         fenetre_width=fenetre_width,
         liste_immunise_debut_annee=liste_immunise_debut_annee,
         exception_fenetre_width=exception_fenetre_width,
+        nb_we_immunite_debut=nb_we_immunite_debut,
     )
 
     anomalies = verifier_coherence(df_calendar, df_medecin, df_conges_medecin, df_fetes, annee)
@@ -724,7 +725,8 @@ def repartition(WE_number, fenetre_width, list_immune, df_calendar, df_fetes, df
 def generer_repartition_annuelle(df_calendar, df_medecin, df_conges_medecin, df_fetes,
                                   annee, liste_med, fenetre_width=4,
                                   liste_immunise_debut_annee=None,
-                                  exception_fenetre_width=None):
+                                  exception_fenetre_width=None,
+                                nb_we_immunite_debut=2):
     """Génère la répartition complète de la campagne `annee`.
 
     1. Astreintes de Noël et du Nouvel An en premier (mémoire inter-années).
@@ -786,7 +788,7 @@ def generer_repartition_annuelle(df_calendar, df_medecin, df_conges_medecin, df_
         print(f"        WE: {we_number} ({fenetre_width})")
         list_immune = []
         largeur = fenetre_width
-        if we_number in (1, 2):
+        if we_number in range(1, nb_we_immunite_debut + 1):
             list_immune.extend(liste_immunise_debut_annee)
         if isinstance(exception_fenetre_width, dict):
             if we_number in exception_fenetre_width:
