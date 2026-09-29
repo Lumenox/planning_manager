@@ -784,7 +784,10 @@ def generer_repartition_annuelle(df_calendar, df_medecin, df_conges_medecin, df_
         largeur = fenetre_width
         if we_number in (1, 2):
             list_immune.extend(liste_immunise_debut_annee)
-        if we_number in exception_fenetre_width:
+        if isinstance(exception_fenetre_width, dict):
+            if we_number in exception_fenetre_width:
+                largeur = max(1, exception_fenetre_width[we_number])
+        elif we_number in exception_fenetre_width:
             largeur = max(1, fenetre_width - 1)
         df_calendar, df_medecin, df_fetes, _, incidents_we = repartition(
             we_number, largeur, list_immune, df_calendar, df_fetes,
