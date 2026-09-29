@@ -739,6 +739,10 @@ def generer_repartition_annuelle(df_calendar, df_medecin, df_conges_medecin, df_
     """
     liste_immunise_debut_annee = liste_immunise_debut_annee or []
     exception_fenetre_width = exception_fenetre_width or []
+    if isinstance(exception_fenetre_width, dict):
+        # JS ne peut sérialiser que des clés de type chaîne (Object.fromEntries d'une Map à
+        # clés numériques donne {"22": 3, ...}) ; on les renormalise en entiers pour que `we_number in exception_fenetre_width` fonctionne réellement.
+        exception_fenetre_width = {int(k): v for k, v in exception_fenetre_width.items()}
 
     deja_annee_davant = df_fetes[
         df_fetes.apply(lambda row: row.astype(str).str.contains(f"{annee-1}|{annee}").any(), axis=1)
