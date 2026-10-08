@@ -539,6 +539,17 @@ async function loadCampagne(){
   finInput.min = campagne.date_debut_campagne;
   finInput.max = campagne.date_fin_campagne;
 
+// Synchronisation automatique : aligne la date de fin dès le choix de la date de début
+  debutInput.addEventListener('change', (e) => {
+    const selectedStart = e.target.value;
+    if (selectedStart) {
+      // Aligne la date de fin sur la date de début sélectionnée
+      finInput.value = selectedStart;
+      // La date de fin ne pourra pas être antérieure à la date de début sélectionnée
+      finInput.min = selectedStart;
+    }
+  });
+  
   document.getElementById('friseDebut').textContent = fmt(campagne.date_debut_campagne);
   document.getElementById('friseFin').textContent = fmt(campagne.date_fin_campagne);
 
